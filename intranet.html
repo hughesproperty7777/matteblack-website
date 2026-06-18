@@ -1134,8 +1134,8 @@ document.addEventListener('click',e=>{
     case'save-draft':saveBuilder();toast('Draft saved');render();break;
     case'feetype':{saveBuilder();const p=db.proposals.find(x=>x.id===builderId);p.fee.type=t.value;persist();render();break;}
     case'save-now':saveBuilder();render();break;
-    case'publish':{const p=db.proposals.find(x=>x.id===id);saveBuilder();if(!p.address){toast('Add an address before publishing');break;}p.status='published';const code=(p.id||'').slice(-5);if(!p.slug||!p.slug.endsWith(code))p.slug=(slugify((p.address||'')+'-'+(p.suburb||''))||'proposal')+'-'+code;p.updatedAt=now();persist();logActivity('Published proposal “'+p.address+'”');toast('Published - unique public link ready');render();break;}
-    case'unpublish':{const p=db.proposals.find(x=>x.id===id);p.status='draft';p.updatedAt=now();persist();toast('Unpublished');render();break;}
+    case'publish':{const p=db.proposals.find(x=>x.id===id);saveBuilder();if(!p.address){toast('Add an address before publishing');break;}p.status='published';const code=(p.id||'').slice(-5);if(!p.slug||!p.slug.endsWith(code))p.slug=(slugify((p.address||'')+'-'+(p.suburb||''))||'proposal')+'-'+code;p.updatedAt=now();persist();logActivity('Published proposal “'+p.address+'”');pushProposalLive(p);toast('Published - unique public link ready');render();break;}
+    case'unpublish':{const p=db.proposals.find(x=>x.id===id);p.status='draft';p.updatedAt=now();persist();unpublishLive(p.slug);toast('Unpublished');render();break;}
     case'copy-link':{const p=db.proposals.find(x=>x.id===id);const link='https://matteblackre.com.au/proposal/'+p.slug;navClip(link);toast('Public link copied');break;}
     case'export-proposal-page':{const p=db.proposals.find(x=>x.id===id);if(!p)break;let doc;try{doc=exportProposalPage(p);}catch(e){toast('Could not build page');break;}const blob=new Blob([doc],{type:'text/html'});const u=URL.createObjectURL(blob);triggerDownload(u,((p.slug||slugify(p.address)||'proposal')+'.html'));setTimeout(()=>{try{URL.revokeObjectURL(u);}catch(e){}},6000);toast('Proposal web page downloaded');break;}
     case'to-pipeline':{const p=db.proposals.find(x=>x.id===id);if(db.pipeline.some(pl=>pl.proposalId===p.id)){toast('Already in pipeline');break;}db.pipeline.unshift({id:uid('pl'),address:p.address,suburb:p.suburb,sellerName:p.sellerName,priceLow:+p.priceLow||0,priceHigh:+p.priceHigh||0,stage:'Proposal Prepared',assignedTo:session.userId,enteredStageAt:now(),proposalId:p.id});persist();logActivity('Added “'+p.address+'” to pipeline');toast('Added to pipeline');route='pipeline';render();break;}
@@ -1221,6 +1221,22 @@ function afterRender(){
 /* ===================== CLIENT EMAIL - share proposal ===================== */
 function slugify(s){return (s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');}
 function proposalLink(p){const code=(p.id||'').slice(-5);const s=p.slug||((slugify((p.address||'')+'-'+(p.suburb||''))||'proposal')+'-'+code);return 'https://matteblackre.com.au/proposal/'+(s||'your-property');}
+/* ---- live proposal hosting (Cloudflare Worker + KV) ---- */
+var PROPOSAL_API='/api/proposal';
+var PROPOSAL_TOKEN='mb-pp-Kx7Qa29Wp8Lz4Tn6Rd3Yf'; /* must match SHARED_TOKEN in the Cloudflare Worker */
+function pushProposalLive(p){
+  try{
+    var html=exportProposalPage(p);
+    fetch(PROPOSAL_API,{method:'POST',headers:{'Content-Type':'application/json','x-mb-token':PROPOSAL_TOKEN},body:JSON.stringify({slug:p.slug,html:html})})
+      .then(function(r){return r.ok?r.json():null;})
+      .then(function(j){if(j&&j.ok){toast('Live link is now active');}})
+      .catch(function(){/* Worker not deployed yet - the Download web page option still works */});
+  }catch(e){}
+}
+function unpublishLive(slug){
+  if(!slug)return;
+  try{fetch(PROPOSAL_API,{method:'DELETE',headers:{'Content-Type':'application/json','x-mb-token':PROPOSAL_TOKEN},body:JSON.stringify({slug:slug})}).catch(function(){});}catch(e){}
+}
 function emFill(str,p,link){const property=[p.address,p.suburb].filter(Boolean).join(', ')||'your property';return (str||'').replace(/\{property\}/g,property).replace(/\{address\}/g,p.address||'your property').replace(/\{suburb\}/g,p.suburb||'').replace(/\{client\}/g,p.sellerName||'there').replace(/\{link\}/g,link);}
 function emailSender(id){const team=db.settings.team||[];return team.find(t=>t.id===id)||team.find(t=>t.lead)||team[0]||{name:'Matthew Hughes',title:'Managing Director, Matte Black Real Estate',phone:'0437 777 377',email:'matthew@matteblackre.com.au'};}
 function emailInner(p,sender,clientName){
